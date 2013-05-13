@@ -1,4 +1,4 @@
-# gobook.go
+# GetFARMSEpub.go
 Maxwell Institute Book to ePub Converter
 Based on GetBook.py by Matt Turner (http://guavaduck.com/)
 Converted to Go
