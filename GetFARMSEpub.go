@@ -26,8 +26,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -44,8 +46,12 @@ type Chapter struct {
 	Text  string
 }
 
-func BookData(incoming string) (string, string) {
-	matches := header_rgx.FindStringSubmatch(incoming)
+func BookData(resp *http.Response) (string, string, string) {
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	body := buf.String()
+
+	matches := header_rgx.FindStringSubmatch(body)
 	if len(matches) < 3 {
 		log.Fatal("Unable to parse title and author.")
 	}
@@ -55,7 +61,7 @@ func BookData(incoming string) (string, string) {
 
 	fmt.Printf("Retrieving '%s' by %s\n", title, author)
 
-	return title, author
+	return title, author, body
 }
 
 func Chapters(book_title string, chapter_fmt string, incoming string) []Chapter {
@@ -93,100 +99,95 @@ func Chapters(book_title string, chapter_fmt string, incoming string) []Chapter 
 	return chapter_data
 }
 
-func AddMimetype(book_path string) {
-	os.Mkdir(book_path, 0755)
-
-	mimetype, err := os.Create(path.Join(book_path, "mimetype"))
+func AddMimetype(book_path string, zippy *zip.Writer) {
+	mimetype, err := zippy.Create(path.Join(book_path, "mimetype"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	mimetype.WriteString("application/epub+zip")
-	mimetype.Close()
+	mimetype.Write([]byte("application/epub+zip"))
 }
 
-func AddContainer(book_path string) {
+func AddContainer(book_path string, zippy *zip.Writer) {
 	os.Mkdir(path.Join(book_path, "META-INF"), 0755)
-	container, err := os.Create(path.Join(book_path, "META-INF", "container.xml"))
+	container, err := zippy.Create(path.Join(book_path, "META-INF", "container.xml"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	container.WriteString("<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>")
-	container.Close()
+	container.Write([]byte("<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>"))
 }
 
-func AddHeader(book_path string, title string, author string, url string) *os.File {
+func AddHeader(book_path string, title string, author string, url string, chapters []Chapter, zippy *zip.Writer) {
 	os.Mkdir(path.Join(book_path, "OEBPS"), 0755)
-	content, err := os.Create(path.Join(book_path, "OEBPS", "content.opf"))
+	content, err := zippy.Create(path.Join(book_path, "OEBPS", "content.opf"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	content.WriteString("<?xml version=\"1.0\"?><package version=\"2.0\" xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:opf=\"http://www.idpf.org/2007/opf\"><dc:title>")
-	content.WriteString(title)
-	content.WriteString("</dc:title><dc:creator opf:role=\"aut\">")
-	content.WriteString(author)
-	content.WriteString("</dc:creator><dc:language>en-US</dc:language><dc:identifier id=\"BookId\">urn:uuid:")
-	content.WriteString(url)
-	content.WriteString("</dc:identifier></metadata>")
-	return content
+
+	content.Write([]byte("<?xml version=\"1.0\"?><package version=\"2.0\" xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:opf=\"http://www.idpf.org/2007/opf\"><dc:title>"))
+	content.Write([]byte(title))
+	content.Write([]byte("</dc:title><dc:creator opf:role=\"aut\">"))
+	content.Write([]byte(author))
+	content.Write([]byte("</dc:creator><dc:language>en-US</dc:language><dc:identifier id=\"BookId\">urn:uuid:"))
+	content.Write([]byte(url))
+	content.Write([]byte("</dc:identifier></metadata>"))
+
+	AddContentHeader(content, chapters)
 }
 
-func AddContentHeader(header *os.File, chapters []Chapter) {
+func AddContentHeader(header io.Writer, chapters []Chapter) {
 	toc_pre_str := "<item id=\"chapter%d\" href=\"chapter%d.xhtml\" media-type=\"application/xhtml+xml\"/>"
 	toc_post_str := "<itemref idref=\"chapter%d\"/>"
 
-	header.WriteString("<manifest><item id=\"ncx\" href=\"toc.ncx\" media-type=\"text/xml\" /><item id=\"title\" href=\"title.xhtml\" media-type=\"application/xhtml+xml\"/>")
+	header.Write([]byte("<manifest><item id=\"ncx\" href=\"toc.ncx\" media-type=\"text/xml\" /><item id=\"title\" href=\"title.xhtml\" media-type=\"application/xhtml+xml\"/>"))
 
 	for chapter := range chapters {
-		header.WriteString(fmt.Sprintf(toc_pre_str, chapter, chapter))
+		header.Write([]byte(fmt.Sprintf(toc_pre_str, chapter, chapter)))
 	}
 
-	header.WriteString("</manifest><spine toc=\"ncx\"><itemref idref=\"title\"/>")
+	header.Write([]byte("</manifest><spine toc=\"ncx\"><itemref idref=\"title\"/>"))
 
 	for chapter := range chapters {
-		header.WriteString(fmt.Sprintf(toc_post_str, chapter))
+		header.Write([]byte(fmt.Sprintf(toc_post_str, chapter)))
 	}
 
-	header.WriteString("</spine></package>")
+	header.Write([]byte("</spine></package>"))
 }
 
-func AddTOC(title string, book_str string, chapters []Chapter, book_path string) {
-	toc, err := os.Create(path.Join(book_path, "OEBPS", "toc.ncx"))
+func AddTOC(title string, book_str string, chapters []Chapter, book_path string, zippy *zip.Writer) {
+	toc, err := zippy.Create(path.Join(book_path, "OEBPS", "toc.ncx"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer toc.Close()
 
-	toc.WriteString(fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\"><head><meta name=\"dtb:uid\" content=\"%s\"/><meta name=\"dtb:depth\" content=\"1\"/><meta name=\"dtb:totalPageCount\" content=\"0\"/><meta name=\"dtb:maxPageNumber\" content=\"0\"/></head><docTitle><text>%s</text></docTitle><navMap><navPoint id=\"title\" playOrder=\"1\"><navLabel><text>Title Page</text></navLabel><content src=\"title.xhtml\"/></navPoint>", book_str, title))
+	toc.Write([]byte(fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\"><head><meta name=\"dtb:uid\" content=\"%s\"/><meta name=\"dtb:depth\" content=\"1\"/><meta name=\"dtb:totalPageCount\" content=\"0\"/><meta name=\"dtb:maxPageNumber\" content=\"0\"/></head><docTitle><text>%s</text></docTitle><navMap><navPoint id=\"title\" playOrder=\"1\"><navLabel><text>Title Page</text></navLabel><content src=\"title.xhtml\"/></navPoint>", book_str, title)))
 
 	for chapter := range chapters {
-		toc.WriteString(fmt.Sprintf("<navPoint id=\"chapter%d\" playOrder=\"%d\"><navLabel><text>%s</text></navLabel><content src=\"chapter%d.xhtml\"/></navPoint>", chapter, chapter+2, chapters[chapter].Title, chapter))
+		toc.Write([]byte(fmt.Sprintf("<navPoint id=\"chapter%d\" playOrder=\"%d\"><navLabel><text>%s</text></navLabel><content src=\"chapter%d.xhtml\"/></navPoint>", chapter, chapter+2, chapters[chapter].Title, chapter)))
 	}
 
-	toc.WriteString("</navMap></ncx>")
+	toc.Write([]byte("</navMap></ncx>"))
 }
 
-func AddTitle(book_title string, book_author string, book_path string) {
-	title, err := os.Create(path.Join(book_path, "OEBPS", "title.xhtml"))
+func AddTitle(book_title string, book_author string, book_path string, zippy *zip.Writer) {
+	title, err := zippy.Create(path.Join(book_path, "OEBPS", "title.xhtml"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer title.Close()
 
-	title.WriteString(fmt.Sprintf("<html>\n\t<head>\n\t\t<title>%s</title>\n\t</head>\n\t<body>\n\t\t<center><h1>%s</h1>\n\t\t<h2>by %s</h2></center>\n\t</body>\n</html>", book_title, book_title, book_author))
+	title.Write([]byte(fmt.Sprintf("<html>\n\t<head>\n\t\t<title>%s</title>\n\t</head>\n\t<body>\n\t\t<center><h1>%s</h1>\n\t\t<h2>by %s</h2></center>\n\t</body>\n</html>", book_title, book_title, book_author)))
 }
 
-func AddChapters(chapters []Chapter, book_path string) {
+func AddChapters(chapters []Chapter, book_path string, zippy *zip.Writer) {
 	chapter_fmt := "<html>\n\t<head>\n\t\t<title>%s</title>\n\t</head>\n\t<body>\n\t\t<center><h1>%s</h1></center>\n\t\t%s\n\t</body>\n</html>"
 
 	for chapter := range chapters {
 		chapter_filename := fmt.Sprintf("chapter%d.xhtml", chapter+1)
-		chapter_file, err := os.Create(path.Join(book_path, "OEBPS", chapter_filename))
+		chapter_file, err := zippy.Create(path.Join(book_path, "OEBPS", chapter_filename))
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer chapter_file.Close()
 
-		chapter_file.WriteString(fmt.Sprintf(chapter_fmt, chapters[chapter].Title, chapters[chapter].Title, chapters[chapter].Text))
+		chapter_file.Write([]byte(fmt.Sprintf(chapter_fmt, chapters[chapter].Title, chapters[chapter].Title, chapters[chapter].Text)))
 	}
 }
 
@@ -195,16 +196,28 @@ func Write(title string, author string, chapters []Chapter, url string) {
 	sanitized_path := path_rgx.ReplaceAllLiteralString(title, " ")
 	book_path := fmt.Sprintf("%s", sanitized_path)
 
-	AddMimetype(book_path)
-	AddContainer(book_path)
+	epub_name := fmt.Sprintf("%s.epub", book_path)
+	epub, err := os.Create(epub_name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer epub.Close()
 
-	header := AddHeader(book_path, title, author, url)
-	defer header.Close()
+	zippy := zip.NewWriter(epub)
 
-	AddContentHeader(header, chapters)
-	AddTOC(title, url, chapters, book_path)
-	AddTitle(title, author, book_path)
-	AddChapters(chapters, book_path)
+	AddMimetype(book_path, zippy)
+	AddContainer(book_path, zippy)
+	AddHeader(book_path, title, author, url, chapters, zippy)
+	AddTOC(title, url, chapters, book_path, zippy)
+	AddTitle(title, author, book_path, zippy)
+	AddChapters(chapters, book_path, zippy)
+
+	err = zippy.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Wrote '%s'\n", epub_name)
 }
 
 func main() {
@@ -228,10 +241,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(resp.Body)
-
-	title, author := BookData(buf.String())
-	chapters := Chapters(title, chapter_str, buf.String())
+	title, author, body := BookData(resp)
+	chapters := Chapters(title, chapter_str, body)
 	Write(title, author, chapters, book_str)
 }

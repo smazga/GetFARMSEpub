@@ -16,10 +16,5 @@ Then simply build and run while passing in the book id.
 
 ```go run GetFARMSEpub.go 105```
 
-## What works
-* content fetching appears to work correctly including title, author, and chapter parsing
-* creating the directory and file layout (and populating the data)
-
-## What doesn't work
-* it's not zipped up into a .epub file, just left as a directory
-* epubcheck reveals various warnings (and errors) that could be fixed with some html validation
+## What doesn't work, yet
+* there are various warnings (and errors) that could be fixed with some html validation
