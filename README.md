@@ -9,7 +9,8 @@ I found GetBook.py in my search for F.A.R.M.S. books in epub format. But, I use 
 I like Go, but haven't had much call to use it. This seemed like a great opportunity, so I embarked what is essentially a straight port from Python to Go.
 
 ## How
-To use it, visit the book you want to download. [example]:(http://maxwellinstitute.byu.edu/publications/books/?bookid=105) Find the bookid at the end of the address (105, in our example).
+To use it, visit the book you want to download. For example: http://maxwellinstitute.byu.edu/publications/books/?bookid=105
+Find the bookid at the end of the address (105).
 
 Then simply build and run while passing in the book id.
 
