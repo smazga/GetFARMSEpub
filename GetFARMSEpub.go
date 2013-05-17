@@ -99,26 +99,24 @@ func Chapters(book_title string, chapter_fmt string, incoming string) []Chapter 
 	return chapter_data
 }
 
-func AddMimetype(book_path string, zippy *zip.Writer) {
-	mimetype, err := zippy.Create(path.Join(book_path, "mimetype"))
+func AddMimetype(zippy *zip.Writer) {
+	mimetype, err := zippy.Create("mimetype")
 	if err != nil {
 		log.Fatal(err)
 	}
 	mimetype.Write([]byte("application/epub+zip"))
 }
 
-func AddContainer(book_path string, zippy *zip.Writer) {
-	os.Mkdir(path.Join(book_path, "META-INF"), 0755)
-	container, err := zippy.Create(path.Join(book_path, "META-INF", "container.xml"))
+func AddContainer(zippy *zip.Writer) {
+	container, err := zippy.Create(path.Join("META-INF", "container.xml"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	container.Write([]byte("<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>"))
 }
 
-func AddHeader(book_path string, title string, author string, url string, chapters []Chapter, zippy *zip.Writer) {
-	os.Mkdir(path.Join(book_path, "OEBPS"), 0755)
-	content, err := zippy.Create(path.Join(book_path, "OEBPS", "content.opf"))
+func AddHeader(title string, author string, url string, chapters []Chapter, zippy *zip.Writer) {
+	content, err := zippy.Create(path.Join("OEBPS", "content.opf"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -153,8 +151,8 @@ func AddContentHeader(header io.Writer, chapters []Chapter) {
 	header.Write([]byte("</spine></package>"))
 }
 
-func AddTOC(title string, book_str string, chapters []Chapter, book_path string, zippy *zip.Writer) {
-	toc, err := zippy.Create(path.Join(book_path, "OEBPS", "toc.ncx"))
+func AddTOC(title string, book_str string, chapters []Chapter, zippy *zip.Writer) {
+	toc, err := zippy.Create(path.Join("OEBPS", "toc.ncx"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -168,8 +166,8 @@ func AddTOC(title string, book_str string, chapters []Chapter, book_path string,
 	toc.Write([]byte("</navMap></ncx>"))
 }
 
-func AddTitle(book_title string, book_author string, book_path string, zippy *zip.Writer) {
-	title, err := zippy.Create(path.Join(book_path, "OEBPS", "title.xhtml"))
+func AddTitle(book_title string, book_author string, zippy *zip.Writer) {
+	title, err := zippy.Create(path.Join("OEBPS", "title.xhtml"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -177,12 +175,12 @@ func AddTitle(book_title string, book_author string, book_path string, zippy *zi
 	title.Write([]byte(fmt.Sprintf("<html>\n\t<head>\n\t\t<title>%s</title>\n\t</head>\n\t<body>\n\t\t<center><h1>%s</h1>\n\t\t<h2>by %s</h2></center>\n\t</body>\n</html>", book_title, book_title, book_author)))
 }
 
-func AddChapters(chapters []Chapter, book_path string, zippy *zip.Writer) {
+func AddChapters(chapters []Chapter, zippy *zip.Writer) {
 	chapter_fmt := "<html>\n\t<head>\n\t\t<title>%s</title>\n\t</head>\n\t<body>\n\t\t<center><h1>%s</h1></center>\n\t\t%s\n\t</body>\n</html>"
 
 	for chapter := range chapters {
 		chapter_filename := fmt.Sprintf("chapter%d.xhtml", chapter+1)
-		chapter_file, err := zippy.Create(path.Join(book_path, "OEBPS", chapter_filename))
+		chapter_file, err := zippy.Create(path.Join("OEBPS", chapter_filename))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -205,12 +203,12 @@ func Write(title string, author string, chapters []Chapter, url string) {
 
 	zippy := zip.NewWriter(epub)
 
-	AddMimetype(book_path, zippy)
-	AddContainer(book_path, zippy)
-	AddHeader(book_path, title, author, url, chapters, zippy)
-	AddTOC(title, url, chapters, book_path, zippy)
-	AddTitle(title, author, book_path, zippy)
-	AddChapters(chapters, book_path, zippy)
+	AddMimetype(zippy)
+	AddContainer(zippy)
+	AddHeader(title, author, url, chapters, zippy)
+	AddTOC(title, url, chapters, zippy)
+	AddTitle(title, author, zippy)
+	AddChapters(chapters, zippy)
 
 	err = zippy.Close()
 	if err != nil {
