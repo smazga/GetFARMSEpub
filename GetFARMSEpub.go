@@ -71,39 +71,29 @@ func BookData(resp *http.Response) (string, string, string) {
 	return title, author, body
 }
 
-func Chapters(book_title string, chapter_fmt string, incoming string) []Chapter {
-	chapter_rgx := regexp.MustCompile(chapter_fmt)
-	chapters := chapter_rgx.FindAllStringSubmatch(incoming, -1)
-	chapter_data := make([]Chapter, len(chapters))
+func Chapters(book_title string, chapter_url string, c chan<- Chapter) []Chapter {
+	title_fmt := fmt.Sprintf("<title>%s - (.+)</title>", book_title)
+	title_rgx := regexp.MustCompile(title_fmt)
 
-	for chapter := range chapters {
-		title_fmt := fmt.Sprintf("<title>%s - (.+)</title>", book_title)
-		title_rgx := regexp.MustCompile(title_fmt)
+	text_rgx := regexp.MustCompile("(?s)<div id='content_readable'>(.*?)</div>")
 
-		text_rgx := regexp.MustCompile("(?s)<div id='content_readable'>(.*?)</div>")
+	book_url := fmt.Sprintf(base_fmt, chapter_url)
 
-		fmt.Printf("Retrieving chapter %d of %d", chapter+1, len(chapters))
-		book_url := fmt.Sprintf(base_fmt, chapters[chapter][0])
-
-		resp, err := http.Get(book_url)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
-
-		chapter_text := buf.String()
-		title := title_rgx.FindStringSubmatch(chapter_text)[1]
-		text := text_rgx.FindStringSubmatch(chapter_text)[1]
-
-		fmt.Printf(" (%s)\n", title)
-
-		new_chapter := Chapter{title, text}
-		chapter_data[chapter] = new_chapter
+	resp, err := http.Get(book_url)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	return chapter_data
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+
+	chapter_text := buf.String()
+	title := title_rgx.FindStringSubmatch(chapter_text)[1]
+	text := text_rgx.FindStringSubmatch(chapter_text)[1]
+
+	c <- Chapter{title, text}
+
+	return nil
 }
 
 func AddMimetype(zippy *zip.Writer) {
@@ -247,6 +237,27 @@ func main() {
 	}
 
 	title, author, body := BookData(resp)
-	chapters := Chapters(title, chapter_str, body)
-	Write(title, author, chapters, book_str)
+
+	chapter_rgx := regexp.MustCompile(chapter_str)
+	chapters := chapter_rgx.FindAllStringSubmatch(body, -1)
+	chapter_data := make([]Chapter, len(chapters))
+	c := make(chan Chapter)
+
+	for chapter := range chapters {
+		fmt.Printf("Retrieving chapter %d of %d\n", chapter+1, len(chapters))
+		go Chapters(title, chapters[chapter][0], c)
+	}
+
+	tofetch := len(chapters)
+
+	fmt.Printf("Chapters left: ")
+	for tofetch > 0 {
+		fmt.Printf("%d ", tofetch)
+		chapter := <-c
+		chapter_data[tofetch] = chapter
+		tofetch = tofetch - 1
+	}
+	fmt.Printf("\n")
+
+	Write(title, author, chapter_data, book_str)
 }
